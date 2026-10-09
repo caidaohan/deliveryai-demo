@@ -130,8 +130,9 @@ export default function App() {
         <OrderView
           items={state.orderItems}
           stage={state.orderStage}
+          logs={state.cancelLogs}
+          onRequestCancel={(uid, reason, note) => dispatch({ type: 'REQUEST_CANCEL', uid, reason, note })}
           onAddMore={() => changeView('menu')}
-          onCancel={(uid) => dispatch({ type: 'REQUEST_CANCEL', uid })}
           onCheckout={() => changeView('checkout')}
         />
       )}
@@ -147,10 +148,17 @@ export default function App() {
         stage={state.orderStage}
         soldOut={state.soldOut}
         services={state.services}
+        orderItems={state.orderItems}
+        cancelLogs={state.cancelLogs}
         onOpenChange={setConsoleOpen}
         onStage={(stage) => dispatch({ type: 'SET_STAGE', stage })}
         onSoldOut={(productId) => dispatch({ type: 'TOGGLE_SOLD_OUT', productId })}
         onRespond={() => dispatch({ type: 'RESPOND_SERVICES' })}
+        onApproveCancel={(uid) => dispatch({ type: 'APPROVE_CANCEL', uid })}
+        onDenyCancel={(uid) => dispatch({ type: 'DENY_CANCEL', uid })}
+        onApproveAllCancel={() => {
+          state.cancelLogs.filter((log) => log.status === 'open').forEach((log) => dispatch({ type: 'APPROVE_CANCEL', uid: log.orderItemUid }))
+        }}
         onReset={() => { dispatch({ type: 'RESET' }); setConsoleOpen(false) }}
       />
 

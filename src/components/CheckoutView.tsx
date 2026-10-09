@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CreditCard, Gift, MessageCircleQuestion, ReceiptText, ShieldCheck, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ interface CheckoutViewProps { items: OrderItem[]; paid: boolean; onPay: () => vo
 export function CheckoutView({ items, paid, onPay, onBack }: CheckoutViewProps) {
   const { t } = useTranslation()
   const [method, setMethod] = useState('mobile')
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  const billable = useMemo(() => items.filter((item) => item.cancelState !== 'approved'), [items])
+  const subtotal = billable.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const discount = subtotal >= 100 ? 30 : 0
   const payable = subtotal - discount
 
@@ -29,7 +30,19 @@ export function CheckoutView({ items, paid, onPay, onBack }: CheckoutViewProps) 
       <div className="grid gap-5 lg:grid-cols-5">
         <section className="rounded-3xl bg-white p-5 shadow-card lg:col-span-3">
           <div className="flex items-center gap-3"><span className="rounded-xl bg-chili-50 p-3 text-chili-500"><ReceiptText /></span><div><p className="text-xs font-bold text-chili-500">{t('checkout.badge')}</p><h1 className="text-2xl font-extrabold text-charcoal-900">{t('checkout.title')}</h1></div></div>
-          <div className="mt-6 space-y-3">{items.map((item) => <div key={item.uid} className="flex justify-between text-sm"><span className="text-charcoal-700">{item.name} <small className="text-charcoal-500">× {item.quantity}</small></span><span className="font-semibold text-charcoal-900">{money(item.price * item.quantity)}</span></div>)}</div>
+          <div className="mt-6 space-y-3">
+            {billable.map((item) => (
+              <div key={item.uid} className="flex justify-between text-sm">
+                <span className="text-charcoal-700">{item.name} <small className="text-charcoal-500">× {item.quantity}</small></span>
+                <span className="font-semibold text-charcoal-900">{money(item.price * item.quantity)}</span>
+              </div>
+            ))}
+            {items.length > billable.length && (
+              <div data-testid="checkout-cancelled-summary" className="mt-2 rounded-xl bg-charcoal-900/5 px-3 py-2 text-xs text-charcoal-500">
+                {t('order.cancelled_price', { amount: money(items.filter((item) => item.cancelState === 'approved').reduce((sum, item) => sum + item.price * item.quantity, 0)) })}
+              </div>
+            )}
+          </div>
           <div className="mt-5 border-t border-dashed border-charcoal-900/10 pt-4"><div className="flex justify-between text-sm text-charcoal-500"><span>{t('checkout.subtotal')}</span><span>{money(subtotal)}</span></div><div className="mt-3 flex justify-between text-sm text-chili-500"><span className="flex items-center gap-2"><Gift size={15} />{t('checkout.discount')}</span><span>-{money(discount)}</span></div><div className="mt-4 flex items-end justify-between text-charcoal-900"><strong>{t('checkout.payable')}</strong><strong className="text-3xl text-chili-500">{money(payable)}</strong></div></div>
         </section>
         <section className="rounded-3xl bg-white p-5 shadow-card lg:col-span-2"><h2 className="font-extrabold text-charcoal-900">{t('checkout.select_method')}</h2><div className="mt-4 space-y-3">{methods.map(({ id, name, icon: Icon, note }) => <button key={id} onClick={() => setMethod(id)} className={`flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition ${method === id ? 'border-chili-500 bg-chili-50' : 'border-charcoal-900/5 bg-rice-50'}`}><span className="rounded-xl bg-white p-2 text-chili-500"><Icon size={20} /></span><span className="flex-1"><strong className="block text-sm text-charcoal-900">{name}</strong><small className="text-charcoal-500">{note}</small></span>{method === id && <Check size={18} className="text-chili-500" />}</button>)}</div><Button onClick={onPay} className="mt-5 w-full"><ShieldCheck size={17} />{t('checkout.confirm_pay', { amount: money(payable) })}</Button><button className="mt-4 flex w-full items-center justify-center gap-2 text-xs font-semibold text-charcoal-500"><MessageCircleQuestion size={14} />{t('checkout.question')}</button></section>
