@@ -244,7 +244,7 @@ test.describe('退菜功能 - E2E 验收测试', () => {
     await page.getByRole('button', { name: /已上菜/ }).click()
     await page.getByRole('button', { name: '完成设置' }).click()
     // 履约进度进入「菜品已上桌」
-    await expect(page.getByText('菜品已上桌')).toBeVisible()
+    await expect(page.getByText('菜品已上桌').first()).toBeVisible()
     // 退菜按钮不再渲染
     await expect(page.getByTestId('order-cancel-btn')).toHaveCount(0)
   })
