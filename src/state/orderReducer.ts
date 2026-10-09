@@ -1,6 +1,6 @@
 import i18next from 'i18next'
 import { uid } from '@/lib/utils'
-import type { AppAction, AppState } from '@/types'
+import type { AppAction, AppState, CancelReason } from '@/types'
 
 export const initialState: AppState = {
   view: 'home',
@@ -12,6 +12,7 @@ export const initialState: AppState = {
   soldOut: ['p8'],
   services: [],
   paid: false,
+  cancelLogs: [],
   lastMessage: i18next.t('message.welcome'),
 }
 
@@ -23,6 +24,8 @@ const stageMessages: Record<string, string> = {
 }
 
 const localeForLanguage = (lang: string) => (lang === 'en' ? 'en-US' : 'zh-CN')
+
+const cancellableStages = new Set(['submitted', 'accepted', 'cooking'])
 
 export function orderReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -80,16 +83,71 @@ export function orderReducer(state: AppState, action: AppAction): AppState {
     }
     case 'RESPOND_SERVICES':
       return { ...state, services: state.services.map((service) => ({ ...service, status: 'responded' })), lastMessage: i18next.t('message.service_responded') }
-    case 'REQUEST_CANCEL':
+    case 'REQUEST_CANCEL': {
+      const target = state.orderItems.find((item) => item.uid === action.uid)
+      // 守卫：未指定 reason、菜品已上桌、已存在 cancelState、找不到菜品 → 直接拒绝并 setMessage
+      if (!target) return { ...state, lastMessage: i18next.t('message.cancel_reason_required') }
+      if (!action.reason) return { ...state, lastMessage: i18next.t('message.cancel_reason_required') }
+      if (!cancellableStages.has(target.stage)) return state
+      if (target.cancelState) return state
+      const trimmedNote = action.note?.trim()
+      const note = trimmedNote ? trimmedNote.slice(0, 100) : undefined
+      if (action.reason === 'other' && !note) return { ...state, lastMessage: i18next.t('message.cancel_reason_required') }
+      const now = new Date().toISOString()
       return {
         ...state,
-        orderItems: state.orderItems.map((item) => item.uid === action.uid ? { ...item, cancelState: 'requested' } : item),
+        orderItems: state.orderItems.map((item) => item.uid === action.uid
+          ? { ...item, cancelState: 'requested', cancelReason: action.reason, cancelNote: note, cancelRequestedAt: now }
+          : item),
+        cancelLogs: [
+          ...state.cancelLogs,
+          {
+            id: uid(),
+            orderItemUid: action.uid,
+            dishName: target.name,
+            quantity: target.quantity,
+            reason: action.reason as CancelReason,
+            note,
+            requestedBy: 'customer',
+            requestedAt: now,
+            status: 'open',
+          },
+        ],
         lastMessage: i18next.t('message.cancel_requested'),
       }
+    }
+    case 'APPROVE_CANCEL': {
+      const target = state.orderItems.find((item) => item.uid === action.uid)
+      if (!target || target.cancelState !== 'requested') return state
+      const now = new Date().toISOString()
+      return {
+        ...state,
+        orderItems: state.orderItems.map((item) => item.uid === action.uid ? { ...item, cancelState: 'approved' } : item),
+        cancelLogs: state.cancelLogs.map((log) => log.orderItemUid === action.uid && log.status === 'open'
+          ? { ...log, status: 'approved', decision: 'approved', decisionAt: now, decidedBy: 'demo-staff' }
+          : log),
+        lastMessage: i18next.t('message.cancel_approved'),
+      }
+    }
+    case 'DENY_CANCEL': {
+      const target = state.orderItems.find((item) => item.uid === action.uid)
+      if (!target || target.cancelState !== 'requested') return state
+      const now = new Date().toISOString()
+      return {
+        ...state,
+        orderItems: state.orderItems.map((item) => item.uid === action.uid
+          ? { ...item, cancelState: undefined, cancelReason: undefined, cancelNote: undefined, cancelRequestedAt: undefined }
+          : item),
+        cancelLogs: state.cancelLogs.map((log) => log.orderItemUid === action.uid && log.status === 'open'
+          ? { ...log, status: 'denied', decision: 'denied', decisionAt: now, decidedBy: 'demo-staff' }
+          : log),
+        lastMessage: i18next.t('message.cancel_denied'),
+      }
+    }
     case 'PAY':
       return { ...state, paid: true, lastMessage: i18next.t('message.paid') }
     case 'RESET':
-      return { ...initialState, lastMessage: i18next.t('message.reset') }
+      return { ...initialState, cancelLogs: [], lastMessage: i18next.t('message.reset') }
     case 'SET_MESSAGE':
       return { ...state, lastMessage: action.message }
     default:

@@ -28,9 +28,36 @@ export interface CartItem {
   orderedBy: string
 }
 
+export type CancelReason =
+  | 'wrong_order'
+  | 'wrong_dish'
+  | 'quality'
+  | 'allergen'
+  | 'soldout_late'
+  | 'kitchen_refuse'
+  | 'other'
+
 export interface OrderItem extends CartItem {
   stage: OrderStage
   cancelState?: 'requested' | 'approved'
+  cancelReason?: CancelReason
+  cancelNote?: string
+  cancelRequestedAt?: string
+}
+
+export interface CancelLog {
+  id: string
+  orderItemUid: string
+  dishName: string
+  quantity: number
+  reason: CancelReason
+  note?: string
+  requestedBy: 'customer'
+  requestedAt: string
+  decisionAt?: string
+  decision?: 'approved' | 'denied'
+  decidedBy?: 'demo-staff'
+  status: 'open' | 'approved' | 'denied'
 }
 
 export interface ServiceRequest {
@@ -50,6 +77,7 @@ export interface AppState {
   soldOut: string[]
   services: ServiceRequest[]
   paid: boolean
+  cancelLogs: CancelLog[]
   lastMessage: string
 }
 
@@ -63,7 +91,9 @@ export type AppAction =
   | { type: 'TOGGLE_SOLD_OUT'; productId: string }
   | { type: 'CALL_SERVICE'; service: string }
   | { type: 'RESPOND_SERVICES' }
-  | { type: 'REQUEST_CANCEL'; uid: string }
+  | { type: 'REQUEST_CANCEL'; uid: string; reason: CancelReason; note?: string }
+  | { type: 'APPROVE_CANCEL'; uid: string }
+  | { type: 'DENY_CANCEL'; uid: string }
   | { type: 'PAY' }
   | { type: 'RESET' }
   | { type: 'SET_MESSAGE'; message: string }
