@@ -18,9 +18,9 @@ import { initialViewFromHash, useViewRoute } from '@/hooks/useViewRoute'
 import { orderReducer, initialState } from '@/state/orderReducer'
 import { products } from '@/data/menu'
 import { money } from '@/lib/utils'
-import type { AppState, ViewName } from '@/types'
+import type { AppState as AppStateType, ViewName } from '@/types'
 
-function createInitialState(): AppState {
+function createInitialState(): AppStateType {
   const search = new URLSearchParams(window.location.search)
   const requestedView = initialViewFromHash()
 
@@ -138,7 +138,29 @@ export default function App() {
       )}
 
       {state.view === 'checkout' && (
-        <CheckoutView items={state.orderItems} paid={state.paid} onPay={() => dispatch({ type: 'PAY' })} onBack={() => changeView('order')} />
+        <CheckoutView
+          items={state.orderItems}
+          paid={state.paid}
+          diners={state.diners}
+          aaSession={state.aaSession}
+          aaRefundLogs={state.aaRefundLogs}
+          onPay={() => dispatch({ type: 'PAY' })}
+          onBack={() => changeView('order')}
+          onAaCreate={(input) => dispatch({
+            type: 'AA_CREATE_SESSION',
+            diners: input.diners,
+            mode: input.mode,
+            payableCents: input.payableCents,
+            timeoutMs: input.timeoutMs,
+            ratioInputs: input.ratioInputs,
+            customInputs: input.customInputs,
+          })}
+          onAaPaySubOrder={(sessionId, diner) => dispatch({ type: 'AA_PAY_SUB_ORDER', sessionId, diner })}
+          onAaExpireSubOrder={(sessionId, diner) => dispatch({ type: 'AA_EXPIRE_SUB_ORDER', sessionId, diner })}
+          onAaCancelAll={(sessionId) => dispatch({ type: 'AA_CANCEL_ALL', sessionId })}
+          onAaRefundSubOrder={(sessionId, diner, note) => dispatch({ type: 'AA_REFUND_SUB_ORDER', sessionId, diner, note })}
+          onAaReissueSubOrder={(sessionId, diner) => dispatch({ type: 'AA_REISSUE_SUB_ORDER', sessionId, diner })}
+        />
       )}
 
       <ServiceSheet open={serviceOpen} requests={state.services} onOpenChange={setServiceOpen} onCall={(service) => dispatch({ type: 'CALL_SERVICE', service })} />
@@ -150,6 +172,8 @@ export default function App() {
         services={state.services}
         orderItems={state.orderItems}
         cancelLogs={state.cancelLogs}
+        aaSession={state.aaSession}
+        aaRefundLogs={state.aaRefundLogs}
         onOpenChange={setConsoleOpen}
         onStage={(stage) => dispatch({ type: 'SET_STAGE', stage })}
         onSoldOut={(productId) => dispatch({ type: 'TOGGLE_SOLD_OUT', productId })}
@@ -160,6 +184,9 @@ export default function App() {
           state.cancelLogs.filter((log) => log.status === 'open').forEach((log) => dispatch({ type: 'APPROVE_CANCEL', uid: log.orderItemUid }))
         }}
         onReset={() => { dispatch({ type: 'RESET' }); setConsoleOpen(false) }}
+        onAaSetTimeout={(sessionId, timeoutMs) => dispatch({ type: 'AA_SET_TIMEOUT', sessionId, timeoutMs })}
+        onAaExpireAll={(sessionId) => dispatch({ type: 'AA_EXPIRE_ALL', sessionId })}
+        onAaReset={(sessionId) => dispatch({ type: 'AA_RESET', sessionId })}
       />
 
       <Dialog open={cartOpen} onOpenChange={setCartOpen}>
