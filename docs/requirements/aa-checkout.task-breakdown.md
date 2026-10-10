@@ -9,7 +9,13 @@ linked_design: aa-checkout.technical-spec
 depends_on_designs: []
 supersedes_designs: []
 created_at: 2026-10-10
-updated_at: 2026-10-10
+updated_at: 2026-10-10 (v2 revision)
+supersedes: aa-checkout.task-breakdown v1 (commit 73281f5)
+revision_notes:
+  - v2 修订原因：N4 commit e1cfea1 实现 Dialog 关闭二次确认时，把 confirmCloseOpen state 和二次确认 Dialog 都放在 AaPayDialog 内部，与 CheckoutView 内的拦截逻辑分散，导致 SPEC §3 REQ-007 P0 业务侧 1 项 fail（E2E 详细原因见 artifacts/自动化用例开发/caidaohan_deliveryai-demo@c31589d/content.json）。
+  - v2 修订范围：把「关闭二次确认」从 AaPayDialog（TASK-FE-007）的职责中移除，下沉到 CheckoutView（TASK-FE-008）作为唯一持有者；TASK-FE-007 不再有 confirmCloseOpen state、不再导出 AaPayCloseConfirmDialog。
+  - v2 修订章节：TASK-FE-007 / TASK-FE-008 / TASK-E2E-001 用例约束。
+  - v2 不修改范围：reducer、i18n 键集合、整体任务分组、其他节点任务。
 ---
 
 # 任务清单: AA 结账（沸点火锅点单演示）
@@ -25,7 +31,11 @@ updated_at: 2026-10-10
 - 阅读 `artifacts/产品Spec设计/产品 Spec：AA 结账/spec.md` §1~§5 与本文件 §10 概要。
 - 阅读 `repos/caidaohan_deliveryai-demo/AGENTS.md`（**不引入新依赖 / 不修改 server/ / 不引入新顶级视图 / hash 路由不变 / useReducer 内存态 / Radix Dialog / Tailwind 类名 / i18n 双语 / 老人模式自适应**）。
 - 阅读 `docs/agent-testing.md`（E2E 自审与执行约束）。
-- E2E 选择器约定（沿用现有 kebab-case 风格）：`aa-card-{diner}`、`aa-pay-confirm`、`aa-pay-abandon`、`aa-dialog-close-confirm`、`aa-cancel-all`、`aa-cancel-confirm`、`aa-refund-{diner}`、`aa-refund-confirm-{diner}`、`aa-reissue-{diner}`、`console-aa-timeout-input`、`console-aa-expire-all`、`console-aa-reset`、`console-aa-reset-confirm`、`checkout-aa-entry`。
+- E2E 选择器约定（沿用现有 kebab-case 风格）：`aa-card-{diner}`、`aa-pay-confirm`、`aa-pay-abandon`、`aa-dialog-close-confirm`（**v2 必落于 CheckoutView 而非 AaPayDialog**）、`aa-cancel-all`、`aa-cancel-confirm`、`aa-refund-{diner}`、`aa-refund-confirm-{diner}`、`aa-reissue-{diner}`、`console-aa-timeout-input`、`console-aa-expire-all`、`console-aa-reset`、`console-aa-reset-confirm`、`checkout-aa-entry`、`checkout-aa-ratio-{diner}`、`checkout-aa-custom-{diner}`、`aa-cancel-entry`、`aa-dialog-close-back`。
+- 拆分面板 Tab 实际为 `role="tab" + aria-selected`（N6 已对齐），E2E 定位时使用 `getByRole('tab', { name: /等额|按比例|自定义/ })`。
+- 退款聚合视图文案「已退款 {{count}} 个子单」（key 为 `checkout.aa_refund_note`，N4 v1 已落地但 Spec 未列出，可保留；新版可统一规整 i18n 键）。
+- 超时用例 E2E 推荐用 `console-aa-expire-all` 一键过期（避免 30s 真实等待阻塞套件）；如需测 `useCountdown` 的真实到期时间，再额外加一个 `timeoutMs = 30000` + `page.waitForFunction` 轮询子单状态 `expired` 的旁路用例，**不阻断**主流程。
+- 已落地的 N6 commit `c31589d` 在数据细节上对齐了 N4 v1 的实现（详见 `artifacts/自动化用例开发/caidaohan_deliveryai-demo@c31589d/content.json`），N4 按本设计 v2 修复后无需重写 E2E 主体，仅复用 `c31589d` 文件即可。
 
 ---
 
@@ -54,16 +64,22 @@ updated_at: 2026-10-10
   - `console.aa_section_title`、`console.aa_timeout_label`、`console.aa_expire_all`、`console.aa_reset`、`console.aa_reset_confirm`、`console.aa_refund_log_title`、`console.aa_refund_log_empty`、`console.aa_refund_log_reason`。
   - `message.aa_created`、`message.aa_invalid_session`、`message.aa_already_paid`、`message.aa_timeout_range`、`message.aa_cancelled`、`message.aa_refunded`。
 - [ ] TASK-FE-006 新建 `src/hooks/useCountdown.ts`：输入 `aaSession: AaSession | undefined` 与 `onExpire: (diner: string) => void`；内部分两块 `useEffect`：（a）对每个 pending 子单计算 `expiryAt = createdAt + timeoutMs`，在到点 `setTimeout(() => onExpire(sub.diner), expiryAt - Date.now())`；（b）1Hz `setInterval` 推进局部 `setState(now => now+1)` 用于渲染 mm:ss；cleanup 在 `aaSession === undefined` / 子单转为非 pending / 组件卸载三类路径清理两类定时器；返回 `{ remainingMs(diner: string), formatted(diner: string): 'mm:ss' }`。
-- [ ] TASK-FE-007 新建 `src/components/AaPayDialog.tsx`：
+- [ ] TASK-FE-007 v2 重写：修改 `src/components/AaPayDialog.tsx`（按 v2 设计，**不持有任何内部 confirm 弹窗与 confirmCloseOpen state；删除既有 `AaPayCloseConfirmDialog` 导出**）：
   - Props = `{ open, onOpenChange, session, diner, amountCents, items, onPay, onAbandon }`。
-  - 渲染：标题「以 {{name}} 身份支付」（`aa_pay_sub`），订单概况（菜品列表，价格用 `centsToYuan → money`），本人子单大金额「应付 ¥{{amount}}」，底部「确认支付 ¥{{amount}}」与「放弃」；副文案 `aa_pay_self`（I-03 默认纳入）。
-  - 二次确认关闭：`onOpenChange(false)` 拦截 → 弹出第二层确认；确认才关闭；同时把 Radix 关闭按钮与 Esc 一并拦截。
-  - 并发守卫：`onPay` 被点击且当前会话中该子单 `status !== 'pending'` 时显示 `aa_already_paid` Toast（沿用 `state.lastMessage`）并不调用 onPay。
-- [ ] TASK-FE-008 修改 `src/components/CheckoutView.tsx`：
+  - 渲染：单一 `<Dialog open={open} onOpenChange={handleOpenChange}>` 内容 = 标题「以 {{name}} 身份支付」（`aa_pay_sub`）+ 子单金额卡片（含 `data-testid="aa-pay-amount"`） + 订单概况（菜品列表用 `centsToYuan → money`）+ 「确认支付 ¥{{amount}}」按钮 (`data-testid="aa-pay-confirm"`) + 「放弃」按钮 (`data-testid="aa-pay-abandon"`)。
+  - **`handleOpenChange(next)` 直接 `onOpenChange(next)` 透传给父级 CheckoutView，不再持有任何 confirmCloseOpen state、不再返回拦截；**这与 v1 设计相反，是 v2 的关键变更。
+  - 「放弃」按钮：`onAbandon()` + `onOpenChange(false)`（不做任何 reducer 写入；只是 UI 关闭）。
+  - 「确认支付」按钮：`onPay()` 让 reducer 守卫处理（reducer 内 `status !== 'pending'` 时 `SET_MESSAGE(aa_already_paid)`），UI 不拦截；若 reducer 成功支付，则 `handlePay` 内 `onOpenChange(false)` 关闭 Dialog。
+  - **必须删除**：v1 中 `AaPayCloseConfirmDialog` 组件的导出与文件内定义（避免误用）；v1 中的 `confirmCloseOpen` state 与拦截 return 分支。
+- [ ] TASK-FE-008 v2 重写：修改 `src/components/CheckoutView.tsx`（按 v2 设计，**集中持有「关闭二次确认」Dialog**）：
   - 新增 AA 入口（`checkout.aa_entry`）与拆分面板（三 Tab + 等额只读 / 比例输入 / 自定义金额输入 + 「确认拆分并邀请」）；面板默认折叠，按钮可见性按 SPEC §3 REQ-001。
   - 生成 `aaSession` 后整片隐藏原「选择支付方式」卡片 + 成功页条件（沿用 `state.paid === true` 判定，但 AA 全部 paid 时 `state.paid = true` 仍走成功页 + AA 已结清附注）。
   - 渲染邀请卡列表：每张卡片用 `bg-white rounded-3xl p-5 shadow-card`（与现有 SPEC §4.1 视觉一致），顶部 diner 名、中部金额、mm:ss 倒计时、底部状态徽章；`paid` 状态绿色对勾 + `bg-emerald-50`；`expired` 灰色 + `border-charcoal-900/10` + 倒计时清零；`cancelled` 灰色 + 删除线金额；`refunded` 灰色 + `text-amber-500`。
-  - 邀请卡点击 → 打开 `AaPayDialog`；卡片点击区 `data-testid={`aa-card-${diner}`}`；Dialog「确认支付」按钮 `data-testid="aa-pay-confirm"`；「放弃」按钮 `data-testid="aa-pay-abandon"`；关闭二次确认按钮 `data-testid="aa-dialog-close-confirm"`。
+  - 邀请卡点击 → 打开 `AaPayDialog`；卡片点击区 `data-testid={`aa-card-${diner}`}`；Dialog「确认支付」按钮 `data-testid="aa-pay-confirm"`（位于 AaPayDialog 内）；「放弃」按钮 `data-testid="aa-pay-abandon"`（位于 AaPayDialog 内）。
+  - **`handlePayDialogOpenChange(next)` 在 `!next && payDialogOpen` 时仅 `setCloseConfirmOpen(true)` 拦截、不调用 `setPayDialogOpen(next)`，避免主 Dialog 真的关闭；其它分支正常 `setPayDialogOpen(next)`。**
+  - **新增「关闭二次确认 Dialog」（位于 CheckoutView，紧邻「取消 AA / 退款」二次确认）**：
+    - 状态 `closeConfirmOpen` 与 v1 一致。
+    - 内容：文案 `checkout.aa_dialog_close_confirm` + 「放弃支付」按钮 (`data-testid="aa-dialog-close-confirm"`：`setPayDialogOpen(false)` + `setPayDialogDiner(null)` + `setCloseConfirmOpen(false)` 三件事一起做) + 「返回/继续支付」按钮（仅 `setCloseConfirmOpen(false)`，主 Dialog 维持打开）。
   - 「取消 AA」按钮 + 二次确认 Dialog（「取消 AA」+「继续支付」+ 按钮 `data-testid="aa-cancel-all"` / `aa-cancel-confirm"`）。
   - 任一 `paid` 子单卡片右下角「为 {{name}} 退款」按钮 + 二次确认；按钮 `data-testid={`aa-refund-${diner}`}` / `aa-refund-confirm-${diner}`；确认后 reducer 跑 `AA_REFUND_SUB_ORDER`，`aa_already_paid` / `aa_cancelled` 文案沿用。
   - 任一 `expired` 子单卡片右下角「重新发起」按钮 `data-testid={`aa-reissue-${diner}`}`；点击 dispatch `AA_REISSUE_SUB_ORDER`。
@@ -109,7 +125,7 @@ updated_at: 2026-10-10
     - `AA-DemoConsole-重置`：发起 AA → 1 子单 paid → 点「重置 AA」 → 二次确认 → 断言 `aaSession` 清空，回到单笔 PAY 路径。
     - `AA-优惠-满 100 减 30`：构造 subtotal ≥ 100 → 发起 AA → 断言「本单已使用 ¥30 会员菜品券」文案；聚合视图与邀请卡金额文案不含「券」字。
     - `AA-单笔 PAY-保留`：AA 尚未发起时，原「确认支付 {{amount}}」按钮可用；AA 全部完成 / 全部取消 / DemoConsole 重置后单笔 PAY 再次可用。
-    - `AA-Dialog-关闭-二次确认`：打开 `AaPayDialog` → 点击遮罩关闭 → 断言二次确认出现；点「继续支付」→ Dialog 保留；点「放弃」→ Dialog 关闭、状态不变更。
+    - `AA-Dialog-关闭-二次确认`（v2 必过用例）：打开 `AaPayDialog` → 通过 Radix 关闭按钮 / Esc / 遮罩任一方式触发 `onOpenChange(false)` → 断言**位于 CheckoutView 内**的二次确认 Dialog 真实出现（含 `aa-dialog-close-confirm` 测试按钮；不在 AaPayDialog 内部）；点「返回/继续支付」→ 主 Dialog 与二次确认 Dialog 状态保持（主 Dialog 仍打开，二次确认 Dialog 关闭）；点「放弃支付」→ 主 Dialog 与二次确认 Dialog 都关闭、子单状态不变更（`aa_already_paid` 不应触发，因为这是单纯的「放弃」不是「重复支付」）；与 `AA-子单-支付与并发防重` 用例区分。
   - 选择器全部沿用 §0 约定的 `aa-card-{diner}` / `aa-pay-confirm` / `aa-dialog-close-confirm` 等 kebab-case；定位优先级 `getByRole` > `getByText` > `[data-testid=...]`。
 - [ ] TASK-E2E-002 自审（提交前）：按 `docs/agent-testing.md` §5 完成 commit 前自审清单；不引入 `sleep` / `waitForTimeout`；唯一例外为「等子单到 30s 过期」使用 `page.waitForFunction` 轮询状态，到点即返回，不阻塞套件整体时长。
 - [ ] TASK-E2E-003 跑全部受影响用例：`npx playwright test e2e/aa-checkout.spec.ts e2e/super-spicy.spec.ts e2e/view-routing.spec.ts e2e/return-dish.spec.ts`；旧 E2E 全绿，新 E2E 全过。
