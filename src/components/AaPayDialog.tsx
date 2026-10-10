@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Check, ShieldCheck, X } from 'lucide-react'
+import { Check, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { centsToYuan, money } from '@/lib/utils'
@@ -17,28 +16,31 @@ interface AaPayDialogProps {
   onAbandon: () => void
 }
 
+/**
+ * 邀请卡点击后弹出的子单支付 Dialog。
+ *
+ * 设计边界（SPEC §2.5.2a / §10.1 TASK-FE-006）：AaPayDialog 不在内部挂任何 confirm 弹窗与
+ * confirmCloseOpen state，关闭拦截由父级 CheckoutView 集中持有（与「取消 AA」「退款」二次确认并列）。
+ * `handleOpenChange(next)` 直接 `onOpenChange(next)` 透传给父级即可。
+ *
+ * UI 层并发守卫（reducer 是最终边界）：当子单 status !== 'pending' 时仍调用 onPay，
+ * 由 reducer 内 `status !== 'pending'` 守卫写 message.aa_already_paid，UI 不关闭 Dialog；
+ * 仅在子单确为 pending 时关闭 Dialog。
+ */
 export function AaPayDialog({ open, onOpenChange, session, diner, amountCents, items, onPay, onAbandon }: AaPayDialogProps) {
   const { t } = useTranslation()
-  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
   const sub: AaSubOrder | undefined = session.subOrders.find((s) => s.diner === diner)
   const amountDisplay = money(centsToYuan(amountCents))
 
-  // 拦截：Radix Dialog 的 onOpenChange(false) 触发（包括遮罩、Esc、关闭按钮）。
-  // 我们只在「当前对话真正关闭」前弹二次确认；二次确认内的关闭直接放行。
+  // 直接透传：关闭拦截由 CheckoutView 的 handlePayDialogOpenChange 持有二次确认 Dialog。
   const handleOpenChange = (next: boolean) => {
-    if (!next && !confirmCloseOpen) {
-      setConfirmCloseOpen(true)
-      return
-    }
     onOpenChange(next)
   }
 
   const handlePay = () => {
-    // 并发守卫：reducer 内是最终边界，但 UI 层提前拦截可避免误点击
+    // UI 层软拦截（非 pending 时不关闭 Dialog，让 reducer SET_MESSAGE 提示本笔已支付）
     if (!sub || sub.status !== 'pending') {
-      // 透传 onPay 触发 reducer 守卫（会写 aa_already_paid message）
       onPay()
-      onOpenChange(false)
       return
     }
     onPay()
@@ -76,42 +78,6 @@ export function AaPayDialog({ open, onOpenChange, session, diner, amountCents, i
             </Button>
             <Button data-testid="aa-pay-abandon" variant="outline" onClick={handleAbandon}>
               <ShieldCheck size={17} />{t('checkout.aa_pay_abandon')}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/**
- * 单独的二次确认 Dialog，用于 AaPayDialog 关闭时拦截。
- * 不嵌入 AaPayDialog 本身，因为 Radix Dialog 不允许嵌套 open=true 的实例。
- */
-export function AaPayCloseConfirmDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConfirm: () => void
-}) {
-  const { t } = useTranslation()
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={t('checkout.aa_already_paid').length === 0 ? '' : ''}>
-        <div className="mt-4 space-y-4">
-          <div className="flex items-center gap-3 rounded-2xl bg-amber-100/70 p-3">
-            <span className="rounded-full bg-white p-2 text-amber-500"><AlertTriangle size={18} /></span>
-            <p className="text-sm leading-6 text-charcoal-700">{t('checkout.aa_dialog_close_confirm')}</p>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button data-testid="aa-dialog-close-confirm" onClick={() => { onConfirm(); onOpenChange(false) }}>
-              <Check size={17} />{t('checkout.aa_pay_abandon')}
-            </Button>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              <X size={17} />{t('common.back')}
             </Button>
           </div>
         </div>
