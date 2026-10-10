@@ -1,5 +1,8 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
 import { resolve } from 'node:path'
 
 /**
