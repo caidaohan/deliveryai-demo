@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- 已通过 import.meta.url 解析为路径，预留给后续工具函数使用
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 import { resolve } from 'node:path'
