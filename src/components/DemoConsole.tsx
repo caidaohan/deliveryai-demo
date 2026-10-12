@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CheckCircle2, ChefHat, ClipboardList, RotateCcw, Store, ToggleLeft, UtensilsCrossed, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { products, tableAreas } from '@/data/menu'
-import type { CancelLog, OrderItem, OrderStage, ServiceRequest } from '@/types'
+import { centsToYuan, money } from '@/lib/utils'
+import type { AaRefundLog, AaSession, CancelLog, OrderItem, OrderStage, ServiceRequest } from '@/types'
 
 const stageIcons: Record<OrderStage, typeof ChefHat> = {
   submitted: Store,
@@ -14,6 +15,9 @@ const stageIcons: Record<OrderStage, typeof ChefHat> = {
 }
 const stageKeys: OrderStage[] = ['submitted', 'accepted', 'cooking', 'served']
 
+const AA_TIMEOUT_MIN = 30_000
+const AA_TIMEOUT_MAX = 1_800_000
+
 interface DemoConsoleProps {
   open: boolean
   table: string
@@ -22,6 +26,8 @@ interface DemoConsoleProps {
   services: ServiceRequest[]
   orderItems: OrderItem[]
   cancelLogs: CancelLog[]
+  aaSession?: AaSession
+  aaRefundLogs: AaRefundLog[]
   onOpenChange: (open: boolean) => void
   onStage: (stage: OrderStage) => void
   onSoldOut: (id: string) => void
@@ -30,9 +36,12 @@ interface DemoConsoleProps {
   onDenyCancel: (uid: string) => void
   onApproveAllCancel: () => void
   onReset: () => void
+  onAaSetTimeout: (sessionId: string, timeoutMs: number) => void
+  onAaExpireAll: (sessionId: string) => void
+  onAaReset: (sessionId?: string) => void
 }
 
-export function DemoConsole({ open, table, stage, soldOut, services, orderItems, cancelLogs, onOpenChange, onStage, onSoldOut, onRespond, onApproveCancel, onDenyCancel, onApproveAllCancel, onReset }: DemoConsoleProps) {
+export function DemoConsole({ open, table, stage, soldOut, services, orderItems, cancelLogs, aaSession, aaRefundLogs, onOpenChange, onStage, onSoldOut, onRespond, onApproveCancel, onDenyCancel, onApproveAllCancel, onReset, onAaSetTimeout, onAaExpireAll, onAaReset }: DemoConsoleProps) {
   const { t } = useTranslation()
   const waiting = services.filter((service) => service.status === 'waiting').length
   const areaKey = tableAreas[table]
@@ -43,6 +52,22 @@ export function DemoConsole({ open, table, stage, soldOut, services, orderItems,
     [orderItems],
   )
   const orderedLogs = useMemo(() => cancelLogs.slice().reverse().slice(0, 20), [cancelLogs])
+  const aaOrderedLogs = useMemo(() => aaRefundLogs.slice().reverse().slice(0, 20), [aaRefundLogs])
+
+  const aaPendingCount = aaSession ? aaSession.subOrders.filter((s) => s.status === 'pending').length : 0
+  const initialTimeout = aaSession?.timeoutMs ?? 1_800_000
+  const [timeoutDraft, setTimeoutDraft] = useState<number>(initialTimeout)
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
+
+  useEffect(() => {
+    setTimeoutDraft(aaSession?.timeoutMs ?? 1_800_000)
+  }, [aaSession?.timeoutMs, aaSession?.id])
+
+  const submitTimeout = () => {
+    if (!aaSession) return
+    const clamped = Math.max(AA_TIMEOUT_MIN, Math.min(AA_TIMEOUT_MAX, Math.round(timeoutDraft)))
+    onAaSetTimeout(aaSession.id, clamped)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -59,6 +84,74 @@ export function DemoConsole({ open, table, stage, soldOut, services, orderItems,
             <Button onClick={onRespond} disabled={!waiting} variant="secondary" className="mt-3 w-full"><CheckCircle2 size={17} />{t('console.respond_btn')}</Button>
           </section>
         </div>
+
+        {/* AA 控制台面板 */}
+        <section data-testid="console-aa-panel" className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="rounded-xl bg-chili-50 p-2 text-chili-500"><ClipboardList size={17} /></span>
+              <h3 className="font-bold text-charcoal-900">{t('console.aa_section_title')}</h3>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${aaSession ? 'bg-amber-100 text-amber-500' : 'bg-charcoal-900/5 text-charcoal-500'}`}>
+              {aaSession ? `${aaSession.subOrders.length} sub` : t('common.back')}
+            </span>
+          </div>
+          <div className="mt-3 space-y-3">
+            <label className="block text-xs text-charcoal-500">
+              {t('console.aa_timeout_label')}（{AA_TIMEOUT_MIN}~{AA_TIMEOUT_MAX}ms）
+              <input
+                data-testid="console-aa-timeout-input"
+                type="number"
+                min={AA_TIMEOUT_MIN}
+                max={AA_TIMEOUT_MAX}
+                value={timeoutDraft}
+                onChange={(e) => setTimeoutDraft(Number(e.target.value) || AA_TIMEOUT_MIN)}
+                onBlur={submitTimeout}
+                onKeyDown={(e) => { if (e.key === 'Enter') submitTimeout() }}
+                className="mt-1 w-full rounded-xl border border-charcoal-900/10 bg-rice-50 px-3 py-2 text-sm text-charcoal-900"
+              />
+            </label>
+            <div className="flex gap-2">
+              <Button
+                data-testid="console-aa-expire-all"
+                variant="secondary"
+                disabled={!aaSession || aaPendingCount === 0}
+                onClick={() => aaSession && onAaExpireAll(aaSession.id)}
+                className="flex-1"
+              >
+                <XCircle size={15} />{t('console.aa_expire_all')}
+              </Button>
+              <Button
+                data-testid="console-aa-reset"
+                variant="outline"
+                disabled={!aaSession && aaRefundLogs.length === 0}
+                onClick={() => setResetConfirmOpen(true)}
+                className="flex-1"
+              >
+                <RotateCcw size={15} />{t('console.aa_reset')}
+              </Button>
+            </div>
+          </div>
+
+          <div data-testid="console-aa-refund-log" className="mt-4 rounded-xl bg-rice-50 p-3">
+            <p className="text-xs font-bold text-charcoal-700">{t('console.aa_refund_log_title')}</p>
+            {aaOrderedLogs.length === 0 ? (
+              <p className="mt-2 text-xs text-charcoal-500">{t('console.aa_refund_log_empty')}</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {aaOrderedLogs.map((log) => (
+                  <li key={log.id} className="rounded-lg bg-white px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <strong className="text-charcoal-900">{log.diner}</strong>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-500">{money(centsToYuan(log.amountCents))}</span>
+                    </div>
+                    <p className="mt-1 text-charcoal-500">{t('console.aa_refund_log_reason')}：{t(`order.cancel_reasons.${log.reason === 'aa_other' ? 'other' : log.reason}`)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
 
         <section data-testid="console-cancel-review" className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -130,6 +223,29 @@ export function DemoConsole({ open, table, stage, soldOut, services, orderItems,
           <div className="scrollbar-none mt-4 flex gap-2 overflow-x-auto pb-1">{products.map((product) => { const unavailable = soldOut.includes(product.id); return <button key={product.id} onClick={() => onSoldOut(product.id)} className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${unavailable ? 'border-chili-500/30 bg-chili-50 text-chili-600' : 'border-charcoal-900/5 bg-rice-50 text-charcoal-500'}`}>{unavailable ? <XCircle size={15} /> : <CheckCircle2 size={15} />}{t(product.name)}</button> })}</div>
         </section>
         <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between"><Button variant="outline" onClick={onReset}><RotateCcw size={17} />{t('console.reset')}</Button><Button onClick={() => onOpenChange(false)}>{t('console.done')}</Button></div>
+
+        {/* AA 重置二次确认 Dialog */}
+        <Dialog open={resetConfirmOpen} onOpenChange={setResetConfirmOpen}>
+          <DialogContent title={t('console.aa_reset')}>
+            <div className="mt-4 space-y-4">
+              <p className="text-sm leading-6 text-charcoal-700">{t('console.aa_reset_confirm')}</p>
+              <div className="flex justify-end gap-2">
+                <Button
+                  data-testid="console-aa-reset-confirm"
+                  onClick={() => {
+                    onAaReset(aaSession?.id)
+                    setResetConfirmOpen(false)
+                  }}
+                >
+                  <Check size={17} />{t('console.aa_reset')}
+                </Button>
+                <Button variant="outline" onClick={() => setResetConfirmOpen(false)}>
+                  <XCircle size={17} />{t('common.back')}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )
